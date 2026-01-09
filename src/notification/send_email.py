@@ -203,7 +203,6 @@ def send_email_smtp(
 
     msg = MIMEMultipart("mixed")
     msg["From"] = mail_from
-    msg["To"] = ", ".join(mail_to)
     msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)
 

@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict
 
 import yaml
@@ -46,6 +46,33 @@ def count_today_utc(db_path: str, arxiv_urls: List[str]) -> int:
         conn.close()
 
 
+def count_yesterday_utc(db_path: str, arxiv_urls: List[str]) -> int:
+    """
+    统计“昨天(UTC)”的论文数：publish_time 形如 'YYYY-MM-DD HH:MM:SS'
+    只统计本次抓取 arxiv_urls 范围内的。
+    """
+    if not arxiv_urls:
+        return 0
+
+    yesterday = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+    placeholders = ",".join(["?"] * len(arxiv_urls))
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            f"""
+            SELECT COUNT(1)
+            FROM papers
+            WHERE arxiv_url IN ({placeholders})
+              AND publish_time LIKE ?
+            """,
+            (*arxiv_urls, f"{yesterday}%"),
+        ).fetchone()
+        return int(row[0] or 0)
+    finally:
+        conn.close()
+
+
 def render_mail(
     web_url: str,
     today_count: int,
@@ -55,7 +82,7 @@ def render_mail(
     lines = []
     lines.append("DailyPaper 报告")
     lines.append(f"来源: {web_url}")
-    lines.append(f"今天(UTC)论文数: {today_count}")
+    lines.append(f"昨日论文数: {today_count}")
     lines.append("")
 
     lines.append("== 关键词相关（Relevant） ==")
@@ -126,8 +153,9 @@ def main():
         return
 
     # 2) 统计今天(UTC)论文数（在本次抓取范围内）
-    today_count = count_today_utc(db_path, arxiv_urls)
-    logger.info("Today(UTC) count in fetched set: %d", today_count)
+    # today_count = count_today_utc(db_path, arxiv_urls)
+    yesterday_count = count_yesterday_utc(db_path, arxiv_urls)
+    logger.info("yesterday count in fetched set: %d", yesterday_count)
 
     # 3) relevant / popular
     relevant = filter_relevant_by_keywords(db_path, arxiv_urls, keywords)
@@ -146,12 +174,12 @@ def main():
     logger.info("Exported CSV: %s", csv_path)
 
     utc_day = datetime.utcnow().strftime("%Y-%m-%d")
-    subject = f"{subject_prefix} {utc_day} | 今日(UTC){today_count}篇 | 相关{len(relevant)} | 热门Top{len(popular)}"
+    subject = f"{subject_prefix} {utc_day} | 昨日{yesterday_count}篇 | 相关{len(relevant)} | 热门Top{len(popular)}"
 
-    body = render_mail(web_url, today_count, relevant, popular)
+    body = render_mail(web_url, yesterday_count, relevant, popular)
 
     logger.info("Sending email. subject=%s", subject)
-    summary_line = f"今天(按updated_at)共更新 {today_count} 篇；Relevant {len(relevant)} 篇；Popular Top{len(popular)}。"
+    summary_line = f"昨日共更新 {yesterday_count} 篇；Relevant {len(relevant)} 篇；Popular Top{len(popular)}。"
 
     send_daily_report_email(
         mail_conf,

@@ -2,13 +2,14 @@
 import os
 import logging
 from datetime import datetime
+from typing import Tuple
 
 
 def setup_run_logger(
     log_dir: str = "log",
     name: str = "DailyPaper",
     level: int = logging.INFO,
-) -> tuple[logging.Logger, str]:
+) -> Tuple[logging.Logger, str]:
     """
     创建 logger：
     - 自动创建 log_dir

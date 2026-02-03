@@ -50,6 +50,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         publish_time  TEXT,   -- UTC 'YYYY-MM-DD HH:MM:SS'
         pdf_views     INTEGER NOT NULL DEFAULT 0,
         kimi_calls    INTEGER NOT NULL DEFAULT 0,
+        notified      INTEGER NOT NULL DEFAULT 0,
         updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """)
@@ -71,6 +72,16 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_papers_updated_at ON papers(updated_at);"
     )
+    # 迁移：为旧数据库增加 notified 字段
+    try:
+        conn.execute("ALTER TABLE papers ADD COLUMN notified INTEGER NOT NULL DEFAULT 0;")
+    except sqlite3.OperationalError:
+        pass  # 字段已存在
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_papers_notified ON papers(notified);"
+    )
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_authors_name ON paper_authors(author_name);"
     )
@@ -79,20 +90,17 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 def _upsert_paper(conn: sqlite3.Connection, row: Dict) -> int:
     """
-    UPSERT papers，并返回 paper_id
+    UPSERT papers，并返回 paper_id。
+    如果记录已存在，仅更新动态字段（阅读量等），不重置 notified 状态。
     """
     conn.execute(
         """
     INSERT INTO papers (
         arxiv_url, title, abstract, subject,
-        publish_time, pdf_views, kimi_calls, updated_at
+        publish_time, pdf_views, kimi_calls, notified, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))
     ON CONFLICT(arxiv_url) DO UPDATE SET
-        title = excluded.title,
-        abstract = excluded.abstract,
-        subject = excluded.subject,
-        publish_time = excluded.publish_time,
         pdf_views = excluded.pdf_views,
         kimi_calls = excluded.kimi_calls,
         updated_at = datetime('now');

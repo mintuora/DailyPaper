@@ -1,31 +1,30 @@
 # DailyPaper
+
 # Contents
 - [DailyPaper](#dailypaper)
 - [Contents](#contents)
 - [Introduction](#introduction)
 - [Install](#install)
   - [1. 克隆仓库](#1-克隆仓库)
-  - [2. 创建 Python 环境（推荐）](#2-创建-python-环境推荐)
-  - [3. 安装依赖](#3-安装依赖)
+  - [2. 创建虚拟环境](#2-创建虚拟环境)
 - [Usage](#usage)
-  - [1. 配置邮件参数](#1-配置邮件参数)
-  - [2. 运行 DailyPaper](#2-运行-dailypaper)
-  - [3. 定时运行（示例）](#3-定时运行示例)
-- [Thanks](#thanks)
+  - [1. 抓取论文 (run.bash)](#1-抓取论文-runbash)
+  - [2. 查询论文 (query.sh)](#2-查询论文-querysh)
+  - [3. 标记处理完成 (mark_done.sh)](#3-标记处理完成-mark_donesh)
+- [n8n 工作流建议](#n8n-工作流建议)
 
 # Introduction
 
-**DailyPaper** 是一个用于**自动抓取、筛选并汇总每日学术论文**的工具，主要面向 arXiv 等公开论文源。  
-它支持根据自定义规则筛选 *Relevant* 与 *Popular* 论文，并自动生成 **CSV 汇总文件** 与 **HTML/Plain 双格式邮件**，每日定时推送到指定邮箱。
+**DailyPaper** 是一个用于**自动抓取、筛选并持久化每日学术论文**的工具。  
+它将论文数据存储在 SQLite 数据库中，并提供了一套完善的脚本接口，方便与 **n8n** 等自动化工具集成，实现高度自定义的推送逻辑。
 
 核心特性包括：
 
-- 📄 自动抓取最新论文（按 `updated_at` / `published_at`）
-- 🔍 可定制的论文筛选逻辑（Relevant / Popular）
-- 📊 热度统计（PDF views + Kimi calls）
-- ✉️ 自动发送结构化 HTML 邮件（含 abstract）
-- 📎 自动附加汇总文件 `DailyPaperSum.csv`
-- 🕒 适合配合 cron / systemd 定时运行
+- 📄 自动从指定源抓取最新论文
+- 🔍 自动去重：数据库仅存储唯一论文，且支持标记处理状态
+- �️ 纯本地化：使用 SQLite 存储，不依赖外部文件或存储服务
+- 🤖 健壮的通知机制：支持在外部流程成功后再标记已处理
+- � 遵循 `AGENT.md` 规范，所有可执行文件均在 `bin/` 目录下
 
 ---
 
@@ -36,93 +35,79 @@
 ```bash
 git clone https://github.com/yourname/DailyPaper.git
 cd DailyPaper
-````
-
-## 2. 创建 Python 环境（推荐）
-
-```bash
-conda create -n dailypaper python=3.10
-conda activate dailypaper
 ```
 
-或使用 `venv`：
+## 2. 创建虚拟环境
+
+项目要求使用 `env` 目录作为虚拟环境。
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-## 3. 安装依赖
-
-```bash
-pip install -r requirements.txt
+python3 -m venv env
+./env/bin/pip install -r requirements.txt
 ```
 
 ---
 
 # Usage
 
-## 1. 配置邮件参数
+## 1. 抓取论文 (run.bash)
 
-可通过 `mail.yaml` 或环境变量配置 SMTP（**环境变量优先生效**）：
-
-```yaml
-SMTP_HOST: smtp.example.com
-SMTP_PORT: 587
-SMTP_USER: your@email.com
-SMTP_PASS: your_smtp_password
-SMTP_TLS: 1
-MAIL_FROM: your@email.com
-MAIL_TO: a@xx.com,b@yy.com
-```
-
-或使用环境变量：
+用于从远程源同步论文到本地 SQLite 数据库。
 
 ```bash
-export SMTP_HOST=smtp.example.com
-export SMTP_PORT=587
-export SMTP_USER=your@email.com
-export SMTP_PASS=xxxxxx
-export SMTP_TLS=1
-export MAIL_FROM=your@email.com
-export MAIL_TO=a@xx.com,b@yy.com
+./bin/run.bash
 ```
 
----
+- **功能**：抓取最新论文，存入 `data/papers.sqlite3`。
+- **注意**：新抓取的论文 `notified` 状态默认为 `0`（未处理）。
 
-## 2. 运行 DailyPaper
+## 2. 查询论文 (query.sh)
+
+供 n8n 等工具调用，以 JSON 格式返回论文列表。
 
 ```bash
-python src/run.py
+./bin/query.sh [OPTIONS]
 ```
 
-运行后将完成以下步骤：
+**常用参数：**
+- `--notified [0|1]`：过滤处理状态。`0` 表示未处理，`1` 表示已处理。
+- `--limit [N]`：限制返回的论文条数，默认 `10`。
+- `--db [PATH]`：指定数据库路径，默认使用 `data/papers.sqlite3`。
 
-1. 抓取当日论文数据
-2. 筛选 Relevant / Popular 论文
-3. 生成 `DailyPaperSum.csv`
-4. 发送包含 abstract 的 HTML 邮件
+**示例：**
+```bash
+# 查询 20 篇尚未处理的新论文
+./bin/query.sh --notified 0 --limit 20
+```
 
----
+## 3. 标记处理完成 (mark_done.sh)
 
-## 3. 定时运行（示例）
-
-使用 `cron` 每天 UTC 08:00 执行：
+在 n8n 流程执行成功后，调用此脚本将论文标记为已处理。
 
 ```bash
-crontab -e
+./bin/mark_done.sh [IDS...] [--file JSON_FILE]
 ```
 
-```cron
-0 8 * * * cd /path/to/DailyPaper && /path/to/python src/run.py >> daily.log 2>&1
-```
+**使用方式：**
+- **直接传入 ID**：
+  ```bash
+  ./bin/mark_done.sh 25870 25871
+  ```
+- **通过 JSON 文件批量标记**（推荐 n8n 使用）：
+  ```bash
+  ./bin/mark_done.sh --file ids.json
+  ```
+  *JSON 文件格式要求：一个包含 ID 整数的数组，或带有 "ids" 键的对象。*
 
 ---
 
-# Thanks
+# n8n 工作流建议
 
-* chatgpt
-* https://kexue.fm/
+1. **定时同步**：使用 Cron 节点定时运行 `./bin/run.bash`。
+2. **提取数据**：使用 Execute Command 节点运行 `./bin/query.sh --notified 0` 获取 JSON 数据。
+3. **业务逻辑**：n8n 处理发送通知、AI 总结等。
+4. **状态闭环**：在流程最后，使用 Execute Command 节点运行 `./bin/mark_done.sh` 并传入已处理的 URL，确保下次不再重复查询。
+
 ---
 
-> DailyPaper：让每天的论文更新，像订阅新闻一样简单 📬
+> DailyPaper：让每天的论文更新，稳定且精准。

@@ -8,8 +8,6 @@ from src.task.get_data import fetch_and_upsert
 from src.misc.get_relevant import filter_relevant_by_keywords
 from src.misc.get_popular import get_top_popular
 from src.misc.logger import setup_run_logger
-from src.misc.export_csv import export_urls_to_csv
-from src.notification.send_email import send_daily_report_email
 
 
 def load_yaml(path: str) -> Dict:
@@ -73,6 +71,42 @@ def count_yesterday_utc(db_path: str, arxiv_urls: List[str]) -> int:
         conn.close()
 
 
+def get_unnotified_urls(db_path: str, arxiv_urls: List[str]) -> List[str]:
+    """
+    从给定的 arxiv_urls 中筛选出尚未通知过的 (notified=0)
+    """
+    if not arxiv_urls:
+        return []
+    placeholders = ",".join(["?"] * len(arxiv_urls))
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            f"SELECT arxiv_url FROM papers WHERE arxiv_url IN ({placeholders}) AND notified = 0",
+            arxiv_urls,
+        ).fetchall()
+        return [r[0] for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_as_notified(db_path: str, arxiv_urls: List[str]) -> None:
+    """
+    将指定的 arxiv_urls 标记为已通知 (notified=1)
+    """
+    if not arxiv_urls:
+        return
+    placeholders = ",".join(["?"] * len(arxiv_urls))
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            f"UPDATE papers SET notified = 1 WHERE arxiv_url IN ({placeholders})",
+            arxiv_urls,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def render_mail(
     web_url: str,
     today_count: int,
@@ -127,7 +161,6 @@ def main():
     # 配置：env > yaml > default
     base_conf = load_yaml(os.getenv("BASE_YAML", "config/base.yaml"))
     task_conf = load_yaml(os.getenv("TASK_YAML", "config/task.yaml"))
-    mail_conf = load_yaml(os.getenv("MAIL_YAML", "config/mail.yaml"))
 
     web_url = (
         os.getenv("WEB_URL")
@@ -145,52 +178,32 @@ def main():
     logger.info("Start run. web_url=%s db_path=%s top_n=%s", web_url, db_path, top_n)
 
     # 1) 抓取 + 入库
-    arxiv_urls = fetch_and_upsert(web_url=web_url, db_path=db_path)
-    logger.info("Fetched & upserted: %d papers", len(arxiv_urls))
+    all_fetched_urls = fetch_and_upsert(web_url=web_url, db_path=db_path)
+    logger.info("Fetched & upserted: %d papers", len(all_fetched_urls))
+
+    # 2) 筛选出未通知过的论文，实现去重
+    arxiv_urls = get_unnotified_urls(db_path, all_fetched_urls)
+    logger.info("New papers (unnotified): %d", len(arxiv_urls))
 
     if not arxiv_urls:
-        logger.warning("No papers fetched. Exit.")
+        logger.info("No new papers to report. Exit.")
         return
 
-    # 2) 统计今天(UTC)论文数（在本次抓取范围内）
-    # today_count = count_today_utc(db_path, arxiv_urls)
+    # 3) 统计昨天(UTC)论文数（在本次抓取范围内）
     yesterday_count = count_yesterday_utc(db_path, arxiv_urls)
-    logger.info("yesterday count in fetched set: %d", yesterday_count)
+    logger.info("yesterday count in new set: %d", yesterday_count)
 
-    # 3) relevant / popular
+    # 4) relevant / popular
     relevant = filter_relevant_by_keywords(db_path, arxiv_urls, keywords)
     logger.info("Relevant matched: %d", len(relevant))
 
     popular = get_top_popular(db_path, arxiv_urls, top_n=top_n)
     logger.info("Popular top_n=%d returned: %d", top_n, len(popular))
 
-    # 4) 邮件内容按你要求：今天多少篇 + relevant + popular
-    subject_prefix = (
-        os.getenv("MAIL_SUBJECT_PREFIX")
-        or mail_conf.get("MAIL_SUBJECT_PREFIX")
-        or "[DailyPaper]"
-    )
-    csv_path = export_urls_to_csv(db_path=db_path, arxiv_urls=arxiv_urls)
-    logger.info("Exported CSV: %s", csv_path)
-
-    utc_day = datetime.utcnow().strftime("%Y-%m-%d")
-    subject = f"{subject_prefix} {utc_day} | 昨日{yesterday_count}篇 | 相关{len(relevant)} | 热门Top{len(popular)}"
-
     body = render_mail(web_url, yesterday_count, relevant, popular)
-
-    logger.info("Sending email. subject=%s", subject)
-    summary_line = f"昨日共更新 {yesterday_count} 篇；Relevant {len(relevant)} 篇；Popular Top{len(popular)}。"
-
-    send_daily_report_email(
-        mail_conf,
-        subject=subject,
-        summary_line=summary_line,
-        relevant_items=relevant,
-        popular_items=popular,
-        attachments=[csv_path],  # ✅ CSV 附件
-    )
     logger.info(body)
-    logger.info("Email sent successfully. log_file=%s", log_path)
+
+    logger.info("Run finished. log_file=%s", log_path)
 
 
 if __name__ == "__main__":

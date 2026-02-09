@@ -1,3 +1,9 @@
 requests
 lxml
 pyyaml
+beautifulsoup4
+pillow
+schedule
+pymupdf
+jinja2
+pylatexenc

@@ -7,5 +7,5 @@ PROJECT_DIR=$(pwd)
 # 设置 PYTHONPATH
 export PYTHONPATH=$PROJECT_DIR:$PYTHONPATH
 
-# 使用项目本地的虚拟环境运行查询脚本
-./env/bin/python src/query_api.py "$@"
+echo "--- 正在启动获取任务 (Fetch) ---"
+./env/bin/python src/task/fetch_task.py

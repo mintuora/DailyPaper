@@ -1,0 +1,2 @@
+from .publisher import WeChatPublisher
+

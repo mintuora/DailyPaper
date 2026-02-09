@@ -1,4 +1,3 @@
-# src/misc/get_relevant.py
 import sqlite3
 from typing import List, Dict
 
@@ -12,10 +11,6 @@ def filter_relevant_by_keywords(
     arxiv_urls: List[str],
     keywords: List[str],
 ) -> List[Dict]:
-    """
-    从本次 arxiv_urls 对应的 papers 中筛“相关”的（简单关键词命中）。
-    返回 dict 列表（可用于邮件渲染）。
-    """
     if not arxiv_urls:
         return []
     if not keywords:
@@ -50,11 +45,9 @@ def filter_relevant_by_keywords(
             )
             if any(k in text for k in kw):
                 out.append(dict(r))
-        # 稍微按“热度”排一下，便于邮件阅读
+
         out.sort(
-            key=lambda x: (
-                int(x.get("pdf_views") or 0) + int(x.get("kimi_calls") or 0)
-            ),
+            key=lambda x: (int(x.get("pdf_views") or 0) + int(x.get("kimi_calls") or 0)),
             reverse=True,
         )
         return out

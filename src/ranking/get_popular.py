@@ -1,4 +1,3 @@
-# src/misc/get_popular.py
 import sqlite3
 from typing import List, Dict
 
@@ -8,9 +7,6 @@ def get_top_popular(
     arxiv_urls: List[str],
     top_n: int = 5,
 ) -> List[Dict]:
-    """
-    从本次 arxiv_urls 中，按 (pdf_views + kimi_calls) 排前 N。
-    """
     if not arxiv_urls:
         return []
 

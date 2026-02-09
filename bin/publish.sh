@@ -7,5 +7,5 @@ PROJECT_DIR=$(pwd)
 # 设置 PYTHONPATH
 export PYTHONPATH=$PROJECT_DIR:$PYTHONPATH
 
-# 使用项目本地的虚拟环境运行
-./env/bin/python src/run.py
+echo "--- 正在启动发布任务 (Publish) ---"
+./env/bin/python src/task/publish_task.py

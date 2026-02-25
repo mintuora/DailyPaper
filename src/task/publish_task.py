@@ -16,6 +16,7 @@ from src.misc.bark_notifier import BarkNotifier
 from src.misc.logger import setup_run_logger
 from src.ranking import get_top_popular, filter_relevant_by_keywords
 from src.misc.config_loader import get_base_conf, get_task_conf
+from src.promo.prompts import Prompts
 
 logger = logging.getLogger("DailyPaper")
 
@@ -98,7 +99,7 @@ def extract_pdf_info(pdf_path):
         logger.error(f"极速 PDF 提取异常: {e}")
     return text, fig1_path
 
-def process_single_paper(p, pdf_dir, publisher, generator):
+def process_single_paper(p, pdf_dir, publisher, generator, db_path):
     """
     处理单篇论文的并发单元
     返回处理后的 paper_data (包含 interpretation, fig1_url) 或 None (被过滤)
@@ -123,20 +124,34 @@ def process_single_paper(p, pdf_dir, publisher, generator):
             interpretation = ""
             is_relevant = True
             
-            if download_pdf(pdf_url, pdf_path):
+            download_success = download_pdf(pdf_url, pdf_path)
+            if download_success:
                 pdf_text, fig1_local_path = extract_pdf_info(pdf_path)
                 # 为每一篇论文生成深度解读，并进行二次判定
                 interpretation, is_relevant = generator.get_pdf_interpretation(pdf_text)
                 p_copy['interpretation'] = interpretation
+            else:
+                logger.warning(f"下载 PDF 失败: {pdf_url}")
+                # 如果下载失败，且不是热门文章，默认设为不相关以避免空内容推送
+                if not p.get('is_popular', False):
+                    is_relevant = False
+
+            is_popular = p.get('is_popular', False)
+            logger.info(f"AI 二次判定: {'相关' if is_relevant else '不相关'} (热门: {is_popular}) - {p['title']}")
             
-            # 二次判定逻辑：如果 AI 认为该文章不符合推送类型
-            if not is_relevant:
-                logger.warning(f"🚫 AI 二次判定不相关，跳过并标记为不推送: {p['title']}")
+            # 二次判定逻辑：如果不是热门文章，且 AI 认为该文章不符合推送类型
+            if not is_popular and not is_relevant:
+                logger.warning(f"🚫 AI 二次判定不相关或 PDF 下载失败，跳过并标记为不推送: {p['title']}")
                 # 更新数据库状态为 0 (所有)
-                db = DBManager("data/papers.sqlite3") 
+                db = DBManager(db_path) 
                 db.update_status([p['arxiv_url']], 0)
                 return None 
             
+            if is_popular and not is_relevant:
+                if not download_success:
+                    logger.warning(f"⚠️ 热门文章 PDF 下载失败，将尝试仅使用摘要信息推送: {p['title']}")
+                else:
+                    logger.info(f"✅ 虽然 AI 判定不相关，但由于是热门文章，保留推送: {p['title']}")            
             # 3. 图片上传微信
             p_copy['fig1_url'] = None
             if fig1_local_path:
@@ -176,7 +191,6 @@ def run_publish():
     pdf_dir = conf.get("pdf_dir", "data/pdfs")
     ollama_conf = conf.get("ollama", {})
     wc_conf = conf.get("wechat", {})
-    prompts = conf.get("prompts", {})
     daily_limit = conf.get("daily_limit", 100)
     
     db = DBManager(db_path)
@@ -209,12 +223,19 @@ def run_publish():
 
     publisher = WeChatPublisher(wc_conf)
     ollama_options = {"num_ctx": ollama_conf.get("num_ctx", 32768), "temperature": 0.2}
-    generator = PaperPromoGenerator(ollama_conf.get("base_url"), ollama_conf.get("model"), prompts, template_path="data/assets/paper_template.html", ollama_options=ollama_options)
+    prompts_conf = Prompts.from_dict(conf.get("prompts", {}))
+    generator = PaperPromoGenerator(
+        ollama_conf.get("base_url"),
+        ollama_conf.get("model"),
+        prompts_conf,
+        template_path="data/assets/paper_template.html",
+        ollama_options=ollama_options,
+    )
 
     # 1. 并发处理所有论文 (获取数据，但不生成 HTML)
     valid_papers = []
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(process_single_paper, p, pdf_dir, publisher, generator) for p in papers]
+        futures = [executor.submit(process_single_paper, p, pdf_dir, publisher, generator, db_path) for p in papers]
         for future in futures:
             try:
                 p_data = future.result()

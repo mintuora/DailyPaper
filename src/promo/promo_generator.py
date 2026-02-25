@@ -5,12 +5,20 @@ import json
 from src.llm import OllamaAPI
 from jinja2 import Environment, FileSystemLoader
 from pylatexenc.latex2text import LatexNodes2Text
+from .prompts import Prompts
 
 logger = logging.getLogger("DailyPaper")
 
 
 class PaperPromoGenerator:
-    def __init__(self, ollama_url, ollama_model, prompts, template_path=None, ollama_options=None):
+    def __init__(
+        self,
+        ollama_url,
+        ollama_model,
+        prompts: Prompts,
+        template_path=None,
+        ollama_options=None,
+    ):
         self.client = OllamaAPI(ollama_url, ollama_model)
         self.prompts = prompts
         self.ollama_options = ollama_options or {}
@@ -174,7 +182,7 @@ class PaperPromoGenerator:
     def get_chinese_title(self, title):
         if not title or len(title.strip()) < 2:
             return title
-        prompt = f'{self.prompts.get("chinese_title")}\n\nTitle: {title}\n\n请直接返回 JSON 格式：{{"title": "..."}}'
+        prompt = f'{self.prompts.chinese_title}\n\nTitle: {title}\n\n请直接返回 JSON 格式：{{"title": "..."}}'
         try:
             result = self.client.generate_text(prompt, options=self.ollama_options)
             return self._render_latex(self._clean_ai_output(result))
@@ -184,7 +192,7 @@ class PaperPromoGenerator:
     def get_chinese_abstract(self, abstract):
         if not abstract or len(abstract.strip()) < 10:
             return abstract
-        prompt = f'{self.prompts.get("chinese_abstract")}\n\nAbstract: {abstract}\n\n请直接返回 JSON 格式：{{"translation": "..."}}'
+        prompt = f'{self.prompts.chinese_abstract}\n\nAbstract: {abstract}\n\n请直接返回 JSON 格式：{{"translation": "..."}}'
         try:
             result = self.client.generate_text(prompt, options=self.ollama_options)
             return self._render_latex(self._clean_ai_output(result))
@@ -195,13 +203,9 @@ class PaperPromoGenerator:
         if not pdf_text or len(pdf_text.strip()) < 100:
             return "PDF 内容过短，无法生成深度总结。", False
 
-        prompt = f"""{self.prompts.get('paper_interpretation')}
+        prompt = f"""{self.prompts.paper_interpretation}
 
-请按照以下 JSON 格式严格输出：
-{{
-  "interpretation": "这里是约500字的中文深度总结...",
-  "is_relevant": true/false (判定该论文是否属于 AI 研究、大模型、蛋白质设计、生物信息学等前沿科技领域，如果是请返回 true，否则返回 false)
-}}
+{self.prompts.paper_interpretation_format}
 
 Content:
 {pdf_text[:20000]}"""

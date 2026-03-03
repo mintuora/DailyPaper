@@ -14,7 +14,7 @@ def run_fetch():
     task_conf = get_task_conf()
     
     web_url = base_conf.get("web", {}).get("URL") or "https://papers.cool/arxiv/cs+q-bio?show=10000"
-    db_path = base_conf.get("db_path", "data/papers.sqlite3")
+    db_path = base_conf.get("db_path", "data/arxiv_papers.sqlite3")
     top_n = base_conf.get("top_popular_n", 5)
     keywords = task_conf.get("keyword", [])
     if isinstance(keywords, str):

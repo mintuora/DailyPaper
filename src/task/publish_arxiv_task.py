@@ -191,8 +191,8 @@ def run_publish():
 
     conf = get_base_conf()
     
-    db_path = conf.get("db_path", "data/papers.sqlite3")
-    pdf_dir = conf.get("pdf_dir", "data/pdfs")
+    db_path = conf.get("db_path", "data/arxiv_papers.sqlite3")
+    pdf_dir = conf.get("pdf_dir", "data/arxiv_pdfs")
     ollama_conf = conf.get("ollama", {})
     wc_conf = conf.get("wechat", {})
     daily_limit = conf.get("daily_limit", 100)

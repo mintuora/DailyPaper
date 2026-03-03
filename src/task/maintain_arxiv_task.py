@@ -10,7 +10,7 @@ def run_maintain():
     with open("config/base.yaml", "r", encoding="utf-8") as f:
         conf = yaml.safe_load(f)
     
-    db_path = conf.get("db_path", "data/papers.sqlite3")
+    db_path = conf.get("db_path", "data/arxiv_papers.sqlite3")
 
     if os.path.exists(db_path):
         logger.info(f"正在删除数据库: {db_path}")

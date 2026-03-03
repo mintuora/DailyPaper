@@ -7,5 +7,5 @@ PROJECT_DIR=$(pwd)
 # 设置 PYTHONPATH
 export PYTHONPATH=$PROJECT_DIR:$PYTHONPATH
 
-echo "--- 正在启动获取任务 (Fetch) ---"
-./env/bin/python src/task/fetch_task.py
+echo "--- 正在启动 arXiv 获取任务 (Fetch arXiv) ---"
+./env/bin/python src/task/fetch_arxiv_task.py

@@ -14,7 +14,7 @@ class OllamaAPI:
         self.model = model
         logger.info(f"OllamaAPI initialized with base_url: {self.base_url}, model: {self.model}")
 
-    def generate_text(self, prompt, model=None, max_retries=3, options=None):
+    def generate_text(self, prompt, model=None, max_retries=3, options=None, images=None):
         target_model = model or self.model
         url = f"{self.base_url}/api/generate"
 
@@ -24,6 +24,8 @@ class OllamaAPI:
             "stream": False,
             "options": options or {},
         }
+        if images:
+            payload["images"] = images
 
         timeout = 600
 
@@ -36,16 +38,39 @@ class OllamaAPI:
                         time.sleep(wait_time)
 
                     logger.info(f"正在调用 Ollama ({target_model})，请求排队中/处理中...")
+                    start_time = time.time()
                     response = requests.post(url, json=payload, timeout=timeout)
-                    response.raise_for_status()
+                    elapsed = time.time() - start_time
+                    
+                    try:
+                        response.raise_for_status()
+                    except requests.exceptions.HTTPError as e:
+                        logger.error(f"Ollama HTTP 错误: {e}, Response: {response.text[:200]}")
+                        raise
 
                     result = response.json()
                     content = result.get("response", "")
+                    
+                    # 尝试从 thinking 字段中提取（针对 CoT 模型）
+                    if not content and "thinking" in result:
+                        thinking = result["thinking"]
+                        if thinking:
+                            logger.warning(f"Ollama response is empty, trying to extract from thinking: {thinking[:100]}...")
+                            # 简单的启发式：如果是数字选择题，尝试找最后的数字
+                            import re
+                            match = re.findall(r"\b\d\b", thinking)
+                            if match:
+                                content = match[-1]
+                                logger.info(f"Extracted '{content}' from thinking.")
+                            else:
+                                # 如果无法提取，则认为失败，抛出异常以便触发重试或兜底
+                                logger.warning("Could not extract valid content from thinking.")
 
                     if not content:
+                        logger.error(f"Ollama 返回空内容. Payload size: {len(str(payload))}, Elapsed: {elapsed:.2f}s, Result: {result}")
                         raise Exception("Ollama 返回内容为空")
 
-                    logger.info("Ollama 文本生成成功")
+                    logger.info(f"Ollama 文本生成成功 (耗时 {elapsed:.2f}s)")
                     return content
 
                 except Exception as e:

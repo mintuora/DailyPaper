@@ -43,8 +43,10 @@ def run_fetch():
         target_urls = list(set(relevant_urls + popular_urls))
         
         if target_urls:
-            db.update_status(target_urls, 1) # 标记为待推送
+            updated = db.mark_pending(target_urls)
+            skipped = len(target_urls) - updated
             logger.info(f"筛选完成：命中了 {len(target_urls)} 篇待推送论文 (关键词: {len(relevant_urls)}, 热度: {len(popular_urls)})")
+            logger.info(f"状态更新：标记待推送 {updated} 篇，跳过已推送 {skipped} 篇")
         else:
             logger.info("筛选完成：本次抓取无命中论文。")
             

@@ -128,5 +128,17 @@ class DBManager:
             )
             conn.commit()
 
+    def mark_pending(self, arxiv_urls: List[str]) -> int:
+        if not arxiv_urls:
+            return 0
+        with self._get_conn() as conn:
+            placeholders = ",".join(["?"] * len(arxiv_urls))
+            cur = conn.execute(
+                f"UPDATE papers SET notified = 1 WHERE arxiv_url IN ({placeholders}) AND notified != 2",
+                (*arxiv_urls,),
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+
     def mark_notified(self, arxiv_urls: List[str]):
         self.update_status(arxiv_urls, 2)

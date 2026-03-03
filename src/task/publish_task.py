@@ -38,66 +38,65 @@ def download_pdf(url, save_path):
         logger.error(f"下载 PDF 异常: {e}")
     return False
 
-def extract_pdf_info(pdf_path):
+def extract_pdf_content(pdf_path):
     """
-    极速 PDF 信息提取：
-    1. 提取前 5 页文本
-    2. 极速策略：优先提取面积最大的嵌入图，仅在无图时尝试渲染 Figure 1
+    PDF 信息提取：
+    1. 提取前 15 页文本 (增加扫描范围)
+    2. 多策略提取候选图片：
+       - 渲染前 8 页（高清渲染，确保捕获所有关键图表）
+       - 搜索包含 "Figure", "Method", "Overview" 等关键词的页面并优先渲染
+    3. 不再提取嵌入图片（避免碎片化小图干扰）
     """
     text = ""
-    fig1_path = None
+    candidate_paths = []
+    
     try:
         doc = fitz.open(pdf_path)
-        # 1. 极速提取文本
-        for page in doc[:5]: text += page.get_text()
+        # 1. 提取文本 (前 15 页)
+        for page in doc[:15]: 
+            text += page.get_text()
         
         os.makedirs("temp/figs", exist_ok=True)
-        fig1_path_local = os.path.join("temp/figs", f"fig1_{os.path.basename(pdf_path)}.png")
+        base_name = os.path.basename(pdf_path).replace(".pdf", "")
         
-        # 2. 极速策略：优先提取嵌入图 (速度极快，无需渲染页面)
-        candidates = []
-        for page_index in range(min(len(doc), 5)):
-            page = doc[page_index]
-            for img in page.get_images():
-                try:
-                    base_image = doc.extract_image(img[0])
-                    if base_image:
-                        w, h = base_image["width"], base_image["height"]
-                        # 过滤小图标，科学图表通常很大
-                        if w > 200 and h > 200:
-                            candidates.append({
-                                "data": base_image["image"],
-                                "score": w * h,
-                                "width": w, "height": h
-                            })
-                except: continue
+        # 2. 页面渲染策略 (不再提取嵌入图，只渲染页面)
+        found_pages = set()
         
-        if candidates:
-            # 找到面积最大的图，通常就是 Figure 1 的原始数据
-            best_img = max(candidates, key=lambda x: x["score"])
-            with open(fig1_path_local, "wb") as f:
-                f.write(best_img["data"])
-            fig1_path = fig1_path_local
-            logger.info(f"极速提取：成功提取嵌入图 {best_img['width']}x{best_img['height']}")
-        else:
-            # 3. 兜底策略：只有在没找到嵌入图时才进行耗时的页面渲染
-            for i in range(min(len(doc), 3)):
-                page = doc[i]
-                if page.search_for("Figure 1") or page.search_for("Fig. 1"):
-                    zoom = 2.0
-                    mat = fitz.Matrix(zoom, zoom)
-                    # 渲染核心区域
-                    clip_rect = fitz.Rect(0, page.rect.height * 0.1, page.rect.width, page.rect.height * 0.7)
-                    pix = page.get_pixmap(matrix=mat, clip=clip_rect)
-                    pix.save(fig1_path_local)
-                    fig1_path = fig1_path_local
-                    logger.info(f"渲染兜底：渲染 Page {i+1} 捕捉关键图")
+        # 策略 A: 优先渲染前 8 页 (通常核心图表都在前面)
+        for i in range(min(8, len(doc))):
+            page_path = os.path.join("temp/figs", f"{base_name}_page_{i+1}.png")
+            # 2.0 倍高清渲染
+            pix = doc[i].get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+            pix.save(page_path)
+            candidate_paths.append(page_path)
+            found_pages.add(i)
+            
+        # 策略 B: 补充搜索关键页面 (如果不在前 8 页)
+        keywords = ["Figure 1", "Fig. 1", "Figure 2", "Fig. 2", "Method", "Overview", "Architecture"]
+        
+        for i, page in enumerate(doc[:15]): # 扫描前 15 页
+            if i in found_pages: continue
+            
+            page_text = page.get_text()
+            # 如果包含关键词，也渲染出来
+            for kw in keywords:
+                if kw in page_text:
+                    page_path = os.path.join("temp/figs", f"{base_name}_keypage_{i+1}.png")
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+                    pix.save(page_path)
+                    candidate_paths.append(page_path)
+                    found_pages.add(i)
                     break
-                    
+            
+            if len(candidate_paths) >= 12: 
+                break
+        
         doc.close()
+        logger.info(f"PDF 提取完成，生成 {len(candidate_paths)} 张渲染页面")
     except Exception as e:
-        logger.error(f"极速 PDF 提取异常: {e}")
-    return text, fig1_path
+        logger.error(f"PDF 提取异常: {e}")
+        
+    return text, candidate_paths
 
 def process_single_paper(p, pdf_dir, publisher, generator, db_path):
     """
@@ -126,10 +125,15 @@ def process_single_paper(p, pdf_dir, publisher, generator, db_path):
             
             download_success = download_pdf(pdf_url, pdf_path)
             if download_success:
-                pdf_text, fig1_local_path = extract_pdf_info(pdf_path)
+                pdf_text, candidate_paths = extract_pdf_content(pdf_path)
                 # 为每一篇论文生成深度解读，并进行二次判定
                 interpretation, is_relevant = generator.get_pdf_interpretation(pdf_text)
                 p_copy['interpretation'] = interpretation
+                
+                if candidate_paths:
+                    fig1_local_path = generator.select_best_image(candidate_paths)
+                else:
+                    fig1_local_path = None
             else:
                 logger.warning(f"下载 PDF 失败: {pdf_url}")
                 # 如果下载失败，且不是热门文章，默认设为不相关以避免空内容推送
@@ -197,6 +201,7 @@ def run_publish():
     
     # 获取待推送论文 (状态 1)
     papers = db.get_unnotified_papers(limit=daily_limit)
+    logger.info(f"获取到 {len(papers)} 篇待推送论文")
     if not papers:
         logger.info("没有新的论文需要发布")
         return
@@ -222,7 +227,7 @@ def run_publish():
         p["is_relevant"] = bool(url and url in relevant_urls)
 
     publisher = WeChatPublisher(wc_conf)
-    ollama_options = {"num_ctx": ollama_conf.get("num_ctx", 32768), "temperature": 0.2}
+    ollama_options = ollama_conf.get("options", {})
     prompts_conf = Prompts.from_dict(conf.get("prompts", {}))
     generator = PaperPromoGenerator(
         ollama_conf.get("base_url"),
@@ -230,6 +235,8 @@ def run_publish():
         prompts_conf,
         template_path="data/assets/paper_template.html",
         ollama_options=ollama_options,
+        vl_model=ollama_conf.get("vl_model"),
+        vl_options=ollama_conf.get("vl_options"),
     )
 
     # 1. 并发处理所有论文 (获取数据，但不生成 HTML)
@@ -283,7 +290,7 @@ def run_publish():
         summary_article = {
             "title": f"ai4protein论文推荐 | {display_date}",
             "author": wc_conf.get("author", "DailyPaper"),
-            "summary": f"今日共深度解析 {len(processed_arxiv_urls)} 篇前沿论文。",
+            "summary": f"今日共 {len(processed_arxiv_urls)} 篇论文等待您查收。",
             "content": full_article_html,
             "cover_image": wc_conf.get("cover_path")
         }
